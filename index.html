@@ -114,7 +114,7 @@ function getIP(){
   return cachedIP || "";
 }
 
-/* ===== GPS watcher ===== */
+/* ===== GPS ===== */
 function initGPSWatcher(){
   if(!navigator.geolocation) return;
 
@@ -151,7 +151,7 @@ async function initUser(){
   }
 }
 
-/* ===== 打卡區狀態 ===== */
+/* ===== 打卡區狀態（含灰化UI） ===== */
 async function updateStatus() {
 
   if (!lastGPS) {
@@ -173,13 +173,45 @@ async function updateStatus() {
     if (newStatus === lastRangeStatus) return;
     lastRangeStatus = newStatus;
 
+    const isManager = MANAGERS.includes(userId);
+
     if (newStatus === "有效打卡區") {
       statusInfo.style.background = "#2ecc71";
       statusInfo.textContent = "有效打卡區";
+
+      btnStart.disabled = false;
+      btnEnd.disabled = false;
+      btnStart.style.opacity = "1";
+      btnEnd.style.opacity = "1";
+      btnStart.style.cursor = "pointer";
+      btnEnd.style.cursor = "pointer";
+
     } else {
       const distText = data.distance ? ` (${data.distance} 公尺)` : "";
       statusInfo.style.background = "#e74c3c";
-      statusInfo.textContent = "無效打卡區" + distText;
+
+      if (!isManager) {
+        statusInfo.textContent = "無效打卡區" + distText + "｜僅主管可打卡";
+
+        btnStart.disabled = true;
+        btnEnd.disabled = true;
+
+        btnStart.style.opacity = "0.5";
+        btnEnd.style.opacity = "0.5";
+        btnStart.style.cursor = "not-allowed";
+        btnEnd.style.cursor = "not-allowed";
+
+      } else {
+        statusInfo.textContent = "無效打卡區" + distText + "｜主管模式";
+
+        btnStart.disabled = false;
+        btnEnd.disabled = false;
+
+        btnStart.style.opacity = "1";
+        btnEnd.style.opacity = "1";
+        btnStart.style.cursor = "pointer";
+        btnEnd.style.cursor = "pointer";
+      }
     }
 
     statusLoaded = true;
@@ -218,66 +250,29 @@ async function updateTodayRecords(){
   }
 }
 
-/* ===== LINE 訊息 ===== */
-async function sendSelfMessage(record){
-  if(!liff.isInClient()) return;
-
-  let headerColor = "#3498db";
-  if(record.status === "下班") headerColor = "#2ecc71";
-  if(record.rangeStatus !== "有效打卡區") headerColor = "#e67e22";
-
-  try{
-    await liff.sendMessages([{
-      type:'flex',
-      altText:'打卡通知',
-      contents:{
-        type:"bubble",
-        header:{
-          type:"box",
-          layout:"vertical",
-          contents:[{
-            type:"text",
-            text:`${record.userName} 已打卡`,
-            weight:"bold",
-            size:"lg",
-            color:"#ffffff"
-          }],
-          backgroundColor: headerColor
-        },
-        body:{
-          type:"box",
-          layout:"vertical",
-          contents:[
-            {type:"text", text:`狀態：${record.status}`},
-            {type:"text", text:`時間：${record.date} ${record.time}`},
-            {type:"text", text:`位置：${record.company}`}
-          ]
-        }
-      }
-    }]);
-  }catch{}
-}
-
-/* ===== ⭐ 打卡功能（已改） ===== */
+/* ===== 打卡（含防繞過） ===== */
 async function clockInOut(status){
 
   const isManager = MANAGERS.includes(userId);
 
-  // ❌ GPS 未定位
-  if (!lastGPS && !isManager) {
-    Swal.fire({icon:"warning",title:"尚未定位",timer:1500,showConfirmButton:false});
+  if(!dataReady || !statusLoaded){
+    Swal.fire({icon:"info",title:"資料讀取中或定位中",timer:1500,showConfirmButton:false});
     return;
   }
 
-  // ❌ 尚未取得打卡區狀態
-  if (!statusLoaded && !isManager) {
-    Swal.fire({icon:"info",title:"定位判定中",timer:1500,showConfirmButton:false});
-    return;
-  }
-
-  // ❌ 非有效區域
+  // ❌ 非主管禁止異地打卡
   if (lastRangeStatus !== "有效打卡區" && !isManager) {
-    Swal.fire({icon:"error",title:"不在有效打卡區",timer:1500,showConfirmButton:false});
+    Swal.fire({
+      icon:"error",
+      title:"目前不在有效打卡區",
+      timer:1500,
+      showConfirmButton:false
+    });
+    return;
+  }
+
+  if(!lastGPS && !isManager){
+    Swal.fire({icon:"warning",title:"定位尚未完成",timer:1500,showConfirmButton:false});
     return;
   }
 
@@ -303,15 +298,6 @@ async function clockInOut(status){
       title: data.rangeStatus==="有效打卡區" ? "打卡成功" : "異常打卡",
       timer:2000,
       showConfirmButton:false
-    });
-
-    sendSelfMessage({
-      userName,
-      status:data.status,
-      date:data.date,
-      time:data.time,
-      company:data.company,
-      rangeStatus:data.rangeStatus
     });
 
     updateTodayRecords();
