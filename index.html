@@ -61,6 +61,9 @@ let statusLoaded=false;
 let MANAGERS = [];
 let isManager = false;
 
+/* ===== 防連點鎖 ===== */
+let isProcessing = false;
+
 /* ===== GPS 即時系統 ===== */
 let lastGPS = null;
 let gpsAccuracy = null;
@@ -283,53 +286,77 @@ async function sendSelfMessage(record){
   }
 }
 
-/* ===== 打卡 ===== */
+/* ===== 打卡（完整版） ===== */
 async function clockInOut(status){
+
+  // ✅ 防連點
+  if(isProcessing){
+    Swal.fire({icon:"info",title:"處理中，請勿重複點擊",timer:1000,showConfirmButton:false});
+    return;
+  }
+  isProcessing = true;
 
   if(!dataReady || !statusLoaded){
     Swal.fire({icon:"info",title:"資料讀取中或定位中",timer:1500,showConfirmButton:false});
-    return;
-  }
-
-  // ❗ 非主管 + 無效區 → 禁止
-  if (lastRangeStatus !== "有效打卡區" && !isManager) {
-    Swal.fire({
-      icon: "warning",
-      title: "目前為無效打卡區",
-      text: "僅主管可打卡",
-      timer: 1500,
-      showConfirmButton: false
-    });
+    isProcessing = false;
     return;
   }
 
   const btn = status==="上班"?btnStart:btnEnd;
-  btn.disabled = true;
   const originalText = btn.textContent;
+  btn.disabled = true;
 
+  // ✅ 倒數立即開始
   let sec = 3;
+  btn.textContent = `打卡中… ${sec}s`;
   const timer = setInterval(()=>{
-    btn.textContent = `打卡中… ${sec}s`;
     sec--;
-    if(sec<0) clearInterval(timer);
+    if(sec >= 0){
+      btn.textContent = `打卡中… ${sec}s`;
+    }
   },1000);
 
   try{
+
     if(!lastGPS){
-      Swal.fire({icon:"warning",title:"定位尚未完成",timer:1500,showConfirmButton:false});
+      throw new Error("GPS尚未取得");
+    }
+
+    // ✅ 即時再檢查位置
+    const checkRes = await fetch(
+      `${API_ENDPOINT}?action=check&lat=${lastGPS.lat}&lng=${lastGPS.lng}&ip=${getIP()}`
+    );
+    const checkData = await checkRes.json();
+    const latestStatus = checkData.rangeStatus;
+
+    // ❗ 無效區禁止
+    if (latestStatus !== "有效打卡區" && !isManager) {
+      Swal.fire({
+        icon: "warning",
+        title: "目前為無效打卡區",
+        text: "僅主管可打卡",
+        timer: 1500,
+        showConfirmButton: false
+      });
       return;
     }
 
+    // ✅ 送出打卡
     const res = await fetch(API_ENDPOINT, {
       method:"POST",
-      body: JSON.stringify({userId,userName,ip:getIP(),gps:lastGPS,status})
+      body: JSON.stringify({
+        userId,
+        userName,
+        ip:getIP(),
+        gps:lastGPS,
+        status
+      })
     });
 
     const data = await res.json();
 
-    const actuallyUpdated = data.message && (data.message.includes("已更新") || data.message.includes("成功"));
+    if(data.message && (data.message.includes("成功") || data.message.includes("已更新"))){
 
-    if(actuallyUpdated){
       const record = {
         userName,
         status: data.status,
@@ -339,11 +366,12 @@ async function clockInOut(status){
         rangeStatus: data.rangeStatus
       };
 
-      if(data.rangeStatus === "有效打卡區"){
-        Swal.fire({icon:"success",title:"打卡成功",timer:2000,showConfirmButton:false});
-      } else {
-        Swal.fire({icon:"warning",title:"打卡無效",timer:2000,showConfirmButton:false});
-      }
+      Swal.fire({
+        icon: data.rangeStatus==="有效打卡區" ? "success" : "warning",
+        title: data.rangeStatus==="有效打卡區" ? "打卡成功" : "打卡無效",
+        timer:2000,
+        showConfirmButton:false
+      });
 
       sendSelfMessage(record);
       updateTodayRecords();
@@ -351,11 +379,12 @@ async function clockInOut(status){
     }
 
   }catch(err){
-    Swal.fire({icon:"error",title:"打卡失敗",timer:2000,showConfirmButton:false});
+    Swal.fire({icon:"error",title:"打卡失敗或定位錯誤",timer:2000,showConfirmButton:false});
   } finally {
     clearInterval(timer);
     btn.textContent = originalText;
     btn.disabled = false;
+    isProcessing = false; // ✅ 解鎖
   }
 }
 
