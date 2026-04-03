@@ -66,6 +66,7 @@ let lastGPS = null;
 let gpsAccuracy = null;
 let cachedIP = "";
 let lastRangeStatus = null;
+let lastGPSTime = 0; // ✅ 新增
 
 const btnStart=document.getElementById("btnStart");
 const btnEnd=document.getElementById("btnEnd");
@@ -73,6 +74,21 @@ const userInfo=document.getElementById("userInfo");
 const statusInfo=document.getElementById("statusInfo");
 const dateTime=document.getElementById("dateTime");
 const todayRecords=document.getElementById("todayRecords");
+
+/* ===== 打卡前驗證（新增） ===== */
+async function verifyBeforeClock() {
+  if (!lastGPS) return false;
+
+  try {
+    const res = await fetch(
+      `${API_ENDPOINT}?action=check&lat=${lastGPS.lat}&lng=${lastGPS.lng}&ip=${getIP()}`
+    );
+    const data = await res.json();
+    return data.rangeStatus === "有效打卡區";
+  } catch {
+    return false;
+  }
+}
 
 /* ===== 讀取主管 ===== */
 async function loadManagers(){
@@ -128,6 +144,10 @@ function initGPSWatcher(){
         lat: pos.coords.latitude,
         lng: pos.coords.longitude
       };
+
+      lastGPSTime = Date.now(); // ✅ 新增
+
+      updateStatus(); // ✅ GPS更新即時刷新
     },
     err=>console.warn("GPS錯誤:",err),
     {
@@ -291,7 +311,33 @@ async function clockInOut(status){
     return;
   }
 
-  // ❗ 非主管 + 無效區 → 禁止
+  // ✅ 定位過期防呆
+  if (Date.now() - lastGPSTime > 5000) {
+    Swal.fire({
+      icon: "warning",
+      title: "定位資訊過期",
+      text: "請稍候定位更新",
+      timer: 1500,
+      showConfirmButton: false
+    });
+    return;
+  }
+
+  // ✅ 打卡前最後驗證（關鍵）
+  const isValidNow = await verifyBeforeClock();
+
+  if (!isValidNow && !isManager) {
+    Swal.fire({
+      icon: "warning",
+      title: "位置已變更",
+      text: "目前不在有效打卡區",
+      timer: 1500,
+      showConfirmButton: false
+    });
+    return;
+  }
+
+  // ❗ 原本邏輯保留
   if (lastRangeStatus !== "有效打卡區" && !isManager) {
     Swal.fire({
       icon: "warning",
@@ -383,7 +429,9 @@ window.onload = async () => {
   dataReady = true;
 
   updateStatus();
-  setInterval(updateStatus, 6000);
+
+  // ✅ 縮短輪詢
+  setInterval(updateStatus, 3000);
 };
 </script>
 
