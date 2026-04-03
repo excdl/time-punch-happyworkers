@@ -277,65 +277,61 @@ async function sendSelfMessage(record){
 }
 
 /* ===== 打卡 ===== */
+/* ===== 打卡 (改良 UX 版) ===== */
 async function clockInOut(status){
   if(!dataReady){
     Swal.fire({icon:"info",title:"資料讀取中",timer:1500,showConfirmButton:false});
     return;
   }
 
-  if (!isManager) {
-    const canClock = await verifyRangeBeforeClockIn();
-    if (!canClock){
-      Swal.fire({icon:"warning",title:"目前為無效打卡區",text:"無法打卡",timer:1500,showConfirmButton:false});
-      return;
-    }
-  }
-
   const btn = status==="上班"?btnStart:btnEnd;
   btn.disabled = true;
-  const originalText = btn.textContent;
 
+  // 顯示倒數提示立即反饋
   let sec = 3;
+  const originalText = btn.textContent;
+  btn.textContent = `打卡中… (${sec}s)`;
+
   const timer = setInterval(()=>{
-    btn.textContent = `打卡中… ${sec}s`;
+    btn.textContent = `打卡中… (${sec}s)`;
     sec--;
     if(sec<0) clearInterval(timer);
-  },1000);
+  }, 1000);
 
   try{
+    // ❗ 使用最後一次 GPS，若還沒有定位給警告
     if(!lastGPS){
-      Swal.fire({icon:"warning",title:"定位尚未完成",timer:1500,showConfirmButton:false});
+      Swal.fire({icon:"warning",title:"尚未取得定位，請稍候",timer:1500,showConfirmButton:false});
+      clearInterval(timer);
+      btn.textContent = originalText;
+      btn.disabled = false;
       return;
     }
 
-    const res = await fetch(API_ENDPOINT,{
+    // 呼叫後端
+    const res = await fetch(API_ENDPOINT, {
       method:"POST",
       body: JSON.stringify({userId,userName,ip:getIP(),gps:lastGPS,status})
     });
+
     const data = await res.json();
 
-    const actuallyUpdated = data.message && (data.message.includes("已更新") || data.message.includes("成功"));
-
-    if(actuallyUpdated){
-      const record = {
-        userName,
-        status: data.status,
-        date: data.date,
-        time: data.time,
-        company: data.company || "未知",
-        rangeStatus: data.rangeStatus
-      };
-
-      if(data.rangeStatus==="有效打卡區") Swal.fire({icon:"success",title:"打卡成功",timer:2000,showConfirmButton:false});
-      else Swal.fire({icon:"warning",title:"打卡無效",timer:2000,showConfirmButton:false});
-
-      sendSelfMessage(record);
-      updateTodayRecords();
-      await updateStatus();
+    // 判斷結果
+    if(data.message && data.message.includes("成功")){
+      Swal.fire({icon:"success",title:"打卡成功",timer:2000,showConfirmButton:false});
+    } else if(data.message && data.message.includes("無效")){
+      Swal.fire({icon:"warning",title:"打卡無效",text:data.message,timer:2000,showConfirmButton:false});
+    } else {
+      Swal.fire({icon:"error",title:"打卡失敗",text:data.message||"",timer:2000,showConfirmButton:false});
     }
 
+    // 更新 UI
+    updateTodayRecords();
+    updateStatus();
+
   }catch(err){
-    Swal.fire({icon:"error",title:"打卡失敗",timer:2000,showConfirmButton:false});
+    Swal.fire({icon:"error",title:"打卡失敗",text:err.message||err,timer:2000,showConfirmButton:false});
+    console.error(err);
   } finally {
     clearInterval(timer);
     btn.textContent = originalText;
@@ -343,9 +339,9 @@ async function clockInOut(status){
   }
 }
 
-/* ===== 按鈕事件 ===== */
-btnStart.onclick = async () => { await updateStatus(); clockInOut("上班"); };
-btnEnd.onclick = async () => { await updateStatus(); clockInOut("下班"); };
+/* ===== 重新綁定按鈕 ===== */
+btnStart.onclick = () => clockInOut("上班");
+btnEnd.onclick = () => clockInOut("下班");
 
 document.getElementById("btnApprove").onclick = () => {
   window.location.href = "https://script.google.com/macros/s/AKfycbxBaH8FGsqhonffJgszR2SYFUz0XpZZVzDQeEdHr_xVMQpj3NvAP1rT4ar3T5kMpmlpIA/exec";
