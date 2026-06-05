@@ -14,11 +14,15 @@ body {font-family:"Arial","Noto Sans TC",sans-serif;background:#f0f4f8;display:f
 #statusInfo {font-size:20px;color:white;padding:8px 25px;border-radius:25px;text-align:center;min-width:180px;}
 .buttons-container {display:flex;gap:15px;width:100%;}
 .buttons-container button {flex:1;padding:15px 0;font-size:22px;font-weight:bold;border-radius:12px;border:none;cursor:pointer;color:white;transition:all 0.2s;}
-#btnStart {background: linear-gradient(135deg, #3498db, #2980b9);}
-#btnEnd {background: linear-gradient(135deg, #2ecc71, #27ae60);}
+
+/* 🚀 優化點：更改按鈕顏色（上班：橘色 / 下班：藍色） */
+#btnStart {background: linear-gradient(135deg, #ff9f43, #ee5253);}
+#btnEnd {background: linear-gradient(135deg, #3498db, #2980b9);}
+
 button:disabled {opacity:0.5;cursor:not-allowed;}
 #todayRecords {width:100%;background:#fafafa;border-radius:14px;padding:15px;border:1px solid #ddd;font-size:18px;text-align:left;}
 #todayRecords span {display:block;margin-bottom:5px;padding-left:5px;border-left:3px solid #3498db;}
+
 /* 主管審批按鈕 */
 #btnApprove {
     margin-top:10px;
@@ -37,7 +41,6 @@ button:disabled {opacity:0.5;cursor:not-allowed;}
     transform: translateY(-2px);
     box-shadow: 0 4px 10px rgba(0,0,0,0.1);
 }
-
 </style>
 </head>
 <body>
@@ -46,8 +49,8 @@ button:disabled {opacity:0.5;cursor:not-allowed;}
   <div id="statusInfo">定位確認中…</div>
   <div id="dateTime">載入中…</div>
   <div class="buttons-container">
-    <button id="btnStart" disabled>上班</button>
-    <button id="btnEnd" disabled>下班</button>
+    <button id="btnStart" disabled>定位中…</button>
+    <button id="btnEnd" disabled>定位中…</button>
   </div>
   <div id="todayRecords">今日打卡紀錄（點擊更新）</div>
   <button id="btnApprove">查看 | 簽核</button>
@@ -95,10 +98,12 @@ function getTodayString(){
   return `${d.getFullYear()}/${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}`;
 }
 
-/* ===== 按鈕鎖定 ===== */
-function setButtonsLock(lock){
-  btnStart.disabled=lock;
-  btnEnd.disabled=lock;
+/* ===== 按鈕狀態還原與文字鎖定 ===== */
+function setButtonsLock(lock, textStart = "上班", textEnd = "下班"){
+  btnStart.disabled = lock;
+  btnEnd.disabled = lock;
+  btnStart.textContent = textStart;
+  btnEnd.textContent = textEnd;
 }
 
 /* ===== 時間 ===== */
@@ -127,17 +132,15 @@ function initGPSWatcher(){
 
   navigator.geolocation.watchPosition(
     pos=>{
-      const isFirstLocation = (lastGPS === null); // 檢查是否是第一次取得定位
+      const isFirstLocation = (lastGPS === null); 
       gpsAccuracy = pos.coords.accuracy;
       lastGPS = {
         lat: pos.coords.latitude,
         lng: pos.coords.longitude
       };
       
-      // 🚀 優化點：一旦拿到 GPS，立刻執行狀態更新，不用等 window.onload 的定時器
-      if (isFirstLocation) {
-        updateStatus();
-      }
+      // 位置改變時，自動刷新定位打卡區狀態
+      updateStatus(isFirstLocation); 
     },
     err=>console.warn("GPS錯誤:",err),
     {
@@ -164,11 +167,11 @@ async function initUser(){
 }
 
 /* ===== 狀態 ===== */
-async function updateStatus() {
-  // 如果還沒拿到 GPS，就繼續維持定位中
+async function updateStatus(forceRefresh = false) {
   if (!lastGPS) {
     statusInfo.textContent = "定位中…";
     statusInfo.style.background = "#95a5a6";
+    setButtonsLock(true, "定位中…", "定位中…");
     statusLoaded = false;
     return;
   }
@@ -182,27 +185,22 @@ async function updateStatus() {
     const newStatus = data.rangeStatus;
     if (!newStatus) return;
 
-    if (newStatus === lastRangeStatus) return;
+    if (!forceRefresh && newStatus === lastRangeStatus) return;
     lastRangeStatus = newStatus;
 
     if (newStatus === "有效打卡區") {
       statusInfo.style.background = "#2ecc71";
       statusInfo.textContent = "有效打卡區";
-
-      btnStart.disabled = false;
-      btnEnd.disabled = false;
-
+      setButtonsLock(false, "上班", "下班");
     } else {
       statusInfo.style.background = "#e74c3c";
       const distText = data.distance ? ` (${data.distance} 公尺)` : "";
       statusInfo.textContent = "無效打卡區" + distText;
 
       if (isManager) {
-        btnStart.disabled = false;
-        btnEnd.disabled = false;
+        setButtonsLock(false, "上班 (主管)", "下班 (主管)");
       } else {
-        btnStart.disabled = true;
-        btnEnd.disabled = true;
+        setButtonsLock(true, "上班", "下班");
       }
     }
 
@@ -238,13 +236,13 @@ async function updateTodayRecords(){
   }
 }
 
-/* ===== LINE 訊息 ===== */
+/* ===== LINE 訊息 (回復顏色維持不變) ===== */
 async function sendSelfMessage(record){
   if(!liff.isInClient()) return;
 
-  let headerColor = "#3498db";
-  if(record.status === "下班") headerColor = "#2ecc71";
-  if(record.rangeStatus !== "有效打卡區") headerColor = "#e67e22";
+  let headerColor = "#3498db"; 
+  if(record.status === "下班") headerColor = "#2ecc71"; 
+  if(record.rangeStatus !== "有效打卡區") headerColor = "#e67e22"; 
 
   let reasonText = record.rangeStatus !== "有效打卡區" ? "異常原因：超出打卡區" : "";
 
@@ -371,40 +369,29 @@ document.getElementById("btnApprove").onclick = () => {
 window.onload = async () => {
   statusInfo.textContent = "定位載入中…";
   statusInfo.style.background = "#95a5a6";
-  setButtonsLock(true);
+  setButtonsLock(true, "同步中...", "同步中...");
 
-  // 1. 優先啟動不需要等待的最快任務（GPS 與 IP 預載）
   initGPSWatcher();
   preloadIP();
 
   try {
-    // 2. 核心：平行執行 LIFF 初始化，完成後立刻解鎖按鈕
     await initUser();
-    setButtonsLock(false);
     dataReady = true;
 
-    // 3. 次要任務：不阻礙主流程，丟到背景平行fetch（讀取紀錄與主管名單）
-    Promise.all([
+    await Promise.all([
       updateTodayRecords(),
       loadManagers()
-    ]).then(() => {
-      // 載入完主管名單後，若 GPS 已經拿到，再次更新一次狀態確認權限
-      if(lastGPS) updateStatus();
-    });
+    ]);
+    
+    if(lastGPS) updateStatus(true);
 
   } catch (error) {
     console.error("初始化失敗", error);
   }
-
-  // 4. 定時器維持不變
-  setInterval(updateStatus, 3000);
 };
 </script>
-
-
 </body>
 </html>
-
 
 
 
