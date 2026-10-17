@@ -285,10 +285,71 @@ async function sendSelfMessage(record){
   }
 }
 
+// ====== 顯示精緻倒數 Loading 提示 ======
+function showClockLoading() {
+    let countdown = 5; // 設定預估秒數
+
+    Swal.fire({
+        html: `
+            <div style="padding:15px 5px 10px 5px; text-align:center;">
+                <!-- 放大且精緻的轉圈與置中倒數數字 -->
+                <div style="position:relative; width:85px; height:85px; margin:0 auto 16px auto;">
+                    <div style="
+                        width:85px; height:85px; 
+                        border:5px solid #edf2f7; border-top:5px solid #3498db;
+                        border-radius:50%; animation:spin 0.8s linear infinite;
+                        box-sizing:border-box;
+                    "></div>
+                    <div style="
+                        position:absolute; top:0; left:0; width:100%; height:100%;
+                        display:flex; align-items:center; justify-content:center;
+                        font-size:28px; font-weight:bold; color:#2c3e50;
+                        font-family:'Courier New', Courier, monospace;
+                        letter-spacing:-1px;
+                    ">
+                        <span id="swalCountdown">${countdown}</span>
+                    </div>
+                </div>
+                <h3 style="margin:0 0 6px 0; color:#2c3e50; font-size:18px; font-weight:bold; letter-spacing:0.5px;">
+                    打卡中，請勿關閉頁面
+                </h3>
+                <p style="margin:0; color:#7f8c8d; font-size:13px;">
+                    正在與雲端伺服器同步資料...
+                </p>
+                <style>
+                    @keyframes spin { 0% { transform:rotate(0deg); } 100% { transform:rotate(360deg); } }
+                </style>
+            </div>
+        `,
+        showConfirmButton: false,
+        allowOutsideClick: false,
+        allowEscapeKey: false,
+        backdrop: "rgba(0,0,0,0.65)",
+        customClass: { popup: "custom-swal-popup" },
+        didOpen: () => {
+            // 啟動倒數計時器
+            window.swalTimer = setInterval(() => {
+                countdown--;
+                const el = document.getElementById("swalCountdown");
+                if (el) {
+                    el.textContent = countdown > 0 ? countdown : "0";
+                }
+                if (countdown <= 0) {
+                    clearInterval(window.swalTimer);
+                }
+            }, 1000);
+        },
+        willClose: () => {
+            // 視窗關閉時清除計時器，避免記憶體洩漏
+            if (window.swalTimer) clearInterval(window.swalTimer);
+        }
+    });
+}
+
 /* ===== 打卡 ===== */
 async function clockInOut(status){
   if(!dataReady || !statusLoaded){
-    Swal.fire({icon:"info",title:"資料讀取中或定位中",timer:1500,showConfirmButton:false});
+    Swal.fire({icon:"info",title:"資料讀取中或定位中",timer:1500,showConfirmButton:false,customClass:{popup:'custom-swal-popup'}});
     return;
   }
 
@@ -298,8 +359,14 @@ async function clockInOut(status){
       title: "目前為無效打卡區",
       text: "僅主管可打卡",
       timer: 1500,
-      showConfirmButton: false
+      showConfirmButton: false,
+      customClass: {popup:'custom-swal-popup'}
     });
+    return;
+  }
+
+  if(!lastGPS){
+    Swal.fire({icon:"warning",title:"定位尚未完成",timer:1500,showConfirmButton:false,customClass:{popup:'custom-swal-popup'}});
     return;
   }
 
@@ -307,19 +374,10 @@ async function clockInOut(status){
   btn.disabled = true;
   const originalText = btn.textContent;
 
-  let sec = 3;
-  const timer = setInterval(()=>{
-    btn.textContent = `打卡中… ${sec}s`;
-    sec--;
-    if(sec<0) clearInterval(timer);
-  },1000);
+  // 呼叫新版的精緻倒數 Loading 畫面
+  showClockLoading();
 
   try{
-    if(!lastGPS){
-      Swal.fire({icon:"warning",title:"定位尚未完成",timer:1500,showConfirmButton:false});
-      return;
-    }
-
     const res = await fetch(API_ENDPOINT, {
       method:"POST",
       body: JSON.stringify({userId,userName,ip:getIP(),gps:lastGPS,status})
@@ -339,20 +397,21 @@ async function clockInOut(status){
       };
 
       if(data.rangeStatus === "有效打卡區"){
-        Swal.fire({icon:"success",title:"打卡成功",timer:2000,showConfirmButton:false});
+        Swal.fire({icon:"success",title:"打卡成功",timer:2000,showConfirmButton:false,customClass:{popup:'custom-swal-popup'}});
       } else {
-        Swal.fire({icon:"warning",title:"打卡無效",timer:2000,showConfirmButton:false});
+        Swal.fire({icon:"warning",title:"打卡無效",timer:2000,showConfirmButton:false,customClass:{popup:'custom-swal-popup'}});
       }
 
       sendSelfMessage(record);
       updateTodayRecords();
       updateStatus();
+    } else {
+      Swal.fire({icon:"error",title:data.message || "打卡失敗",timer:2000,showConfirmButton:false,customClass:{popup:'custom-swal-popup'}});
     }
 
   }catch(err){
-    Swal.fire({icon:"error",title:"打卡失敗",timer:2000,showConfirmButton:false});
+    Swal.fire({icon:"error",title:"打卡失敗",timer:2000,showConfirmButton:false,customClass:{popup:'custom-swal-popup'}});
   } finally {
-    clearInterval(timer);
     btn.textContent = originalText;
     btn.disabled = false;
   }
